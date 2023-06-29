@@ -1,67 +1,83 @@
+from threading import Thread
+import time
+from bot import Bot
 import constants
+import utils
 from pyrogram import Client
-from pyrogram.types import Message, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, ReplyKeyboardRemove
-from datetime import datetime
+from pyrogram.types import Message
 from logger import Logger
+from user import User
 
 class CustomHandler:
     def __init__(self, logger: Logger):
         self.logger = logger
-        self.lastPipi: datetime = None
-        self.lastKaka: datetime = None
+        self.users = []
+        self.thread = Thread(target=self.runPhantom)
+        self.thread.start()
 
-    def getMsgHandler(self, app):
+    def getMsgHandler(self, bot: Bot):
+        keyboard = utils.getKeyboard()
+        self.bot = bot
+
         def handle(app: Client, msg: Message):
+            user = self.getUser(msg.from_user.id)
             try:
                 if msg.text == '/start':
-                    pipiBtn = KeyboardButton(constants.PIPI_BTN_TEXT)
-                    kakaBtn = KeyboardButton(constants.KAKA_BTN_TEXT)
-                    checkBtn = KeyboardButton(constants.CHECK_BTN_TEXT)
-                    keyboard = ReplyKeyboardMarkup([[pipiBtn,kakaBtn], [checkBtn]])
                     msg.reply(constants.START_MESSAGE, reply_markup=keyboard)
                     return
                 
                 if msg.text == constants.KAKA_BTN_TEXT:
-                    if self.lastKaka is None:
-                        self.lastKaka = datetime.now()
-                        msg.reply(constants.FIRST_TIME)
-                        return
-                    now = datetime.now()
-                    diff = now - self.lastKaka
-                    self.lastKaka = now
-                    countHrs = round(diff.seconds / 3600, 2)
-                    message = f'Кошке потребовалось {countHrs} часов чтобы сделать это!'
-                    msg.reply(message)
+                    message = utils.getFormattedMessage(user.lastKaka)
+                    user.updateKaka()
+                    msg.reply(message, reply_markup=keyboard)
                     return
                 
                 if msg.text == constants.PIPI_BTN_TEXT:
-                    if self.lastPipi is None:
-                        self.lastPipi = datetime.now()
-                        msg.reply(constants.FIRST_TIME)
-                        return
-                    now = datetime.now()
-                    diff = now - self.lastPipi
-                    self.lastPipi = now
-                    countHrs = round(diff.seconds / 3600, 2)
-                    message = f'Кошке потребовалось {countHrs} часов чтобы сделать это!'
-                    msg.reply(message)
+                    message = utils.getFormattedMessage(user.lastPipi)
+                    user.updatePipi()
+                    msg.reply(message, reply_markup=keyboard)
                     return
                 
                 if msg.text == constants.CHECK_BTN_TEXT:
-                    now = datetime.now()
-                    diffPipi = '∞'
-                    diffKaka = '∞'
-                    if not self.lastPipi is None:
-                        diffPipi = round((now - self.lastPipi).seconds / 3600, 2)
-                    if not self.lastKaka is None:
-                        diffKaka = round((now - self.lastKaka).seconds / 3600, 2)
-                    message = f'Последний раз:\nПисала: {diffPipi} часов назад\nКакала: {diffKaka} часов назад'
-                    msg.reply(message)
+                    message = utils.getFormattedStatusMessage(user.lastPipi, user.lastKaka)
+                    msg.reply(message, reply_markup=keyboard)
                     return
                 
-                msg.reply(constants.ERROR)
+                msg.reply(constants.ERROR, reply_markup=keyboard)
             except Exception as e:
-                msg.reply(constants.ERROR)
+                msg.reply(constants.ERROR, reply_markup=keyboard)
                 self.logger.error(e)
                 return
         return handle
+
+    def getUser(self, id: int) -> User:
+        for user in self.users:
+            if user.id == id:
+                return user
+        user = User(id)
+        self.users.append(user)
+        return user
+    
+    def runPhantom(self):
+        while(True):
+            time.sleep(3 * 60 * 60)
+            try:
+                self.performJob()
+            except Exception as e:
+                self.logger.error(e)
+
+    def performJob(self):
+        self.logger.info('Started performJob')
+
+        for user in self.users:
+            isNeedKaka = utils.checkTime(user.lastKaka)
+            isNeedPipi = utils.checkTime(user.lastPipi)
+
+            if not isNeedKaka and not isNeedPipi:
+                continue
+            try:
+                self.bot.send_message(user.id, constants.WARNING)
+            except Exception as e:
+                self.logger.error(e)
+
+        self.logger.info('Stopped performJob')
